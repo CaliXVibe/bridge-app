@@ -1,0 +1,66 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f4ef;
+  --ink: #1b1b1b;
+  --muted: #5c5852;
+  --card: #fffdf8;
+  --line: #d9d2c5;
+  --accent: #0b5fff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.wrap {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+h1 { font-size: 1.75rem; margin-bottom: 0.35rem; }
+h2 { font-size: 1.15rem; }
+p, li { color: var(--ink); }
+.muted { color: var(--muted); }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin: 1rem 0;
+}
+
+label { display: block; margin: 0.5rem 0; }
+button, .btn {
+  appearance: none;
+  border: 0;
+  background: var(--accent);
+  color: white;
+  padding: 0.55rem 0.9rem;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+button.secondary, a.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.error { color: #8b1e1e; }
+.ok { color: #186338; }
+
+nav { display: flex; gap: 1rem; margin-bottom: 1.5rem; }
+nav a { color: var(--accent); }
+
+code { font-size: 0.95em; }

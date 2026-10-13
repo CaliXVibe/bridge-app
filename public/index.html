@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bridge App</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="wrap">
+    <nav>
+      <a href="/">Onboarding</a>
+      <a href="/dashboard">Dashboard (stub)</a>
+      <a href="/health">Health</a>
+    </nav>
+    <h1>Bridge App</h1>
+    <p class="muted">One private GitHub repo. Five AIs. The app is the orchestrator, not the middleman.</p>
+
+    <section class="card" id="session-card">
+      <h2>Sign in</h2>
+      <p id="session-status">Checking session…</p>
+      <p>
+        <a class="btn" id="github-auth" href="/auth/github">Continue with GitHub App</a>
+        <button type="button" class="secondary" id="stub-auth" hidden>Local stub sign-in</button>
+      </p>
+    </section>
+
+    <section class="card" id="wizard" hidden>
+      <h2>Onboarding wizard</h2>
+      <div id="step"></div>
+      <p id="wizard-error" class="error"></p>
+    </section>
+  </main>
+  <script src="/onboarding.js"></script>
+</body>
+</html>
