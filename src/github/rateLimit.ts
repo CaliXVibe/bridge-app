@@ -13,6 +13,8 @@ export class GitHubRateLimitError extends Error {
 export function shouldBackoff(status: number, headers: Headers): boolean {
   if (status === 429) return true;
   if (status === 403 && headers.get("X-RateLimit-Remaining") === "0") return true;
+  // Secondary rate limits: 403 with Retry-After but remaining > 0.
+  if (status === 403 && headers.get("Retry-After")) return true;
   return false;
 }
 

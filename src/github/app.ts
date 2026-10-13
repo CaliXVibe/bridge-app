@@ -9,6 +9,9 @@ export type GitHubUserProfile = {
 };
 
 export class GitHubApp {
+  private readonly tokenCache = new Map<string, { token: string; expiresAtMs: number }>();
+  private readonly inflight = new Map<string, Promise<string>>();
+
   constructor(
     private readonly config: GitHubAppConfig,
     private readonly http: GitHubHttp,
@@ -23,14 +26,30 @@ export class GitHubApp {
     if (!installationId) {
       throw new Error("GitHub App installation ID is not configured");
     }
-    const jwt = this.appJwt();
-    const result = await this.http.request<{ token: string }>(
-      "POST",
-      `/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
-      jwt,
-      {},
-    );
-    return result.token;
+    const cached = this.tokenCache.get(installationId);
+    // Reuse until 5 minutes before expiry (tokens last 1 hour).
+    if (cached && cached.expiresAtMs - 5 * 60_000 > this.now()) return cached.token;
+    const pending = this.inflight.get(installationId);
+    if (pending) return pending;
+    const promise = (async () => {
+      const jwt = this.appJwt();
+      const result = await this.http.request<{ token: string; expires_at?: string }>(
+        "POST",
+        `/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
+        jwt,
+        {},
+      );
+      const parsed = result.expires_at ? Date.parse(result.expires_at) : Number.NaN;
+      const expiresAtMs = Number.isNaN(parsed) ? this.now() + 55 * 60_000 : parsed;
+      this.tokenCache.set(installationId, { token: result.token, expiresAtMs });
+      return result.token;
+    })();
+    this.inflight.set(installationId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.inflight.delete(installationId);
+    }
   }
 
   authorizeUrl(state: string, redirectUri: string): string {

@@ -43,10 +43,49 @@ function assertPrivate(repo: { private?: boolean; html_url?: string; full_name?:
   }
 }
 
+/** Rejects paths GitHub would refuse or that try to escape the repo root. */
+export function encodeRepoPath(path: string): string {
+  if (typeof path !== "string" || !path) throw new Error("file path is required");
+  if (path.startsWith("/")) throw new Error("file path must not start with a slash");
+  const parts = path.split("/");
+  for (const part of parts) {
+    if (!part || part === "." || part === "..") {
+      throw new Error(`invalid file path: ${JSON.stringify(path)}`);
+    }
+  }
+  return parts.map(encodeURIComponent).join("/");
+}
+
+function isWriteConflict(error: unknown): boolean {
+  if (!(error instanceof GitHubHttpError)) return false;
+  if (error.status === 409) return true;
+  // 422 when a sha is required/stale because the file changed between GET and PUT.
+  return error.status === 422 && /sha/i.test(error.body);
+}
+
+// GitHub serializes Contents API commits per branch; queue writes per repo in-process
+// so concurrent verify/scaffold calls don't race each other into 409s.
+const writeQueues = new Map<string, Promise<unknown>>();
+function enqueueWrite<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const prev = writeQueues.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(task);
+  writeQueues.set(key, next);
+  void next.finally(() => {
+    if (writeQueues.get(key) === next) writeQueues.delete(key);
+  }).catch(() => undefined);
+  return next;
+}
+
+export type LiveRepoClientOptions = {
+  conflictRetries?: number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
 export class LiveGitHubRepoClient implements GitHubRepoClient {
   constructor(
     private readonly http: GitHubHttp,
     private readonly getToken: () => Promise<string>,
+    private readonly options: LiveRepoClientOptions = {},
   ) {}
 
   async inspectRepo(input: { owner: string; repo: string }): Promise<{
@@ -88,7 +127,14 @@ export class LiveGitHubRepoClient implements GitHubRepoClient {
       html_url: string;
       name: string;
       owner: { login: string };
-    }>("POST", path, token, payload);
+    }>("POST", path, token, payload).catch((error: unknown) => {
+      if (error instanceof GitHubHttpError && (error.status === 403 || error.status === 404)) {
+        throw new Error(
+          `GitHub refused to create the repository (${error.status}). A GitHub App installation token cannot create repositories for a personal account; sign in with GitHub (user token) or create the private repo yourself and choose "use existing repo".`,
+        );
+      }
+      throw error;
+    });
     assertPrivate(repo);
     return {
       owner: repo.owner.login,
@@ -106,35 +152,46 @@ export class LiveGitHubRepoClient implements GitHubRepoClient {
     message: string;
   }): Promise<{ sha: string }> {
     const token = await this.getToken();
-    const apiPath = `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/contents/${input.path
-      .split("/")
-      .map(encodeURIComponent)
-      .join("/")}`;
+    const apiPath = `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/contents/${encodeRepoPath(input.path)}`;
 
-    let sha: string | undefined;
-    try {
-      const existing = await this.http.request<{ sha: string }>("GET", apiPath, token);
-      sha = existing.sha;
-    } catch (error) {
-      if (!(error instanceof GitHubHttpError) || error.status !== 404) {
-        throw error;
+    return enqueueWrite(`${input.owner}/${input.repo}`.toLowerCase(), () => this.putFileOnce(apiPath, token, input));
+  }
+
+  private async putFileOnce(
+    apiPath: string,
+    token: string,
+    input: { content: string; message: string },
+  ): Promise<{ sha: string }> {
+    const retries = this.options.conflictRetries ?? 4;
+    const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    for (let attempt = 0; ; attempt += 1) {
+      let sha: string | undefined;
+      try {
+        const existing = await this.http.request<{ sha: string }>("GET", apiPath, token);
+        sha = existing.sha;
+      } catch (error) {
+        if (!(error instanceof GitHubHttpError) || error.status !== 404) {
+          throw error;
+        }
+      }
+      try {
+        const result = await this.http.request<{ content: { sha: string } }>("PUT", apiPath, token, {
+          message: input.message,
+          content: Buffer.from(input.content, "utf8").toString("base64"),
+          sha,
+        });
+        return { sha: result.content.sha };
+      } catch (error) {
+        if (!isWriteConflict(error) || attempt >= retries) throw error;
+        // Concurrent commits move the branch head; re-read sha and retry with jittered backoff.
+        await sleep(250 * 2 ** attempt + Math.floor(Math.random() * 250));
       }
     }
-
-    const result = await this.http.request<{ content: { sha: string } }>("PUT", apiPath, token, {
-      message: input.message,
-      content: Buffer.from(input.content, "utf8").toString("base64"),
-      sha,
-    });
-    return { sha: result.content.sha };
   }
 
   async getFile(input: { owner: string; repo: string; path: string }): Promise<RepoFile> {
     const token = await this.getToken();
-    const apiPath = `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/contents/${input.path
-      .split("/")
-      .map(encodeURIComponent)
-      .join("/")}`;
+    const apiPath = `/repos/${encodeURIComponent(input.owner)}/${encodeURIComponent(input.repo)}/contents/${encodeRepoPath(input.path)}`;
     const result = await this.http.request<{ content: string; encoding: string; sha: string; path: string }>(
       "GET",
       apiPath,
